@@ -1,0 +1,339 @@
+---
+title: "Data608 Module 3 Assignment"
+author: "Chinedu Onyeka"
+date: '2022-10-09'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load the required libraries
+```{r load-lib, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(plotly)
+library(shiny)
+```
+
+Read in the data
+```{r read-data,message=FALSE, warning=FALSE}
+cdc_mortality_df <- read.csv('https://raw.githubusercontent.com/charleyferrari/CUNY_DATA_608/master/module3/data/cleaned-cdc-mortality-1999-2010-2.csv')
+cdc_mortality_df <- as_tibble(cdc_mortality_df)
+```
+
+Check the head
+```{r}
+head(cdc_mortality_df)
+```
+Check the summary
+```{r}
+summary(cdc_mortality_df)
+```
+
+```{r rename_col, warning=FALSE}
+# rename the ICD.Chapter to ICD_chapter and Crude.Rate to Crude_Rate
+cdc_mortality_df <- cdc_mortality_df %>% rename(ICD_Chapter = ICD.Chapter, Crude_Rate = Crude.Rate)
+cdc_mortality_df
+```
+```{r}
+df = cdc_mortality_df
+states <- unique(df$State)
+
+df_summary <-  df %>% 
+               group_by(Year,ICD_Chapter) %>% 
+               summarise(State = "Average",
+                    Deaths = mean(Deaths),
+                    Population = mean(Population),
+                    Crude_Rate = 100000 * sum(Deaths)/sum(Population)) %>% 
+               bind_rows(df)
+df2 <- df_summary
+```
+
+
+#### Question 1
+As a researcher, you frequently compare mortality rates from particular causes across different States. You need a visualization that will let you see (for 2010 only) the crude mortality rate, across all States, from one cause (for example, Neoplasms, which are effectively cancers). Create a visualization that allows you to rank States by crude mortality for each cause of death.  
+
+```{r filter2010}
+#Filter the data for only 2010 and from one cause say Neoplasms
+cdc_mortality_df_2010 = cdc_mortality_df %>% filter(Year == 2010 & ICD_Chapter == 'Neoplasms') %>% 
+                        arrange(State, desc(Crude_Rate))
+head(cdc_mortality_df_2010)
+```
+ShinyApp for Question1
+
+```{r shinyApp1}
+
+# Build the UI for question1
+ui <- fluidPage(
+  # Panel for Question 1
+  tabsetPanel( 
+    tabPanel(title = "Question1",
+      sidebarPanel(
+        htmlOutput('message_q1'),
+        sliderInput('year_q1','Year',min(df$Year),max(df$Year),2010,1,width=600,
+                  sep = ""),
+        selectInput('causes_q1', 'Causes', 
+                  unique(df$ICD_Chapter), selected='Neoplasms',width = 600)
+      ),
+      mainPanel(plotlyOutput('plot1_q1'))
+    )
+    ))
+
+# build the server for question1
+server <- function(input, output, session) {
+  # Question1 Server Side
+  data_q1 <- reactive({
+    df2 <- df %>%
+       filter(Year == input$year_q1) %>%
+       filter(ICD_Chapter == input$causes_q1) %>%
+       arrange(Crude_Rate) 
+    df2$State <- factor(df2$State, levels = unique(df2$State))
+    df2
+  })
+  # output message for question1
+  output$message_q1 <- renderText({
+    
+    df2 <- data_q1()
+    if (nrow(df2) == 0) {
+      paste("<h4><center>No Data for<b>",input$causes_q1,
+            "</b>in",input$year_q1,"</center></h4>", sep =" ") 
+    }
+    else {
+      paste("<h4><center>The Mortality Rates for<b>",input$causes_q1,
+            "</b>in",input$year_q1,"<br>(scaled by multiplying 100000)</center></h4>", sep =" ")
+    }
+  })
+  
+  # output plot for question1
+  output$plot1_q1 <- renderPlotly({
+
+    df2 <- data_q1()
+    if (nrow(df2) == 0) {
+      plotly_empty(type = "bar",width = 1,height = 1,)
+    }
+    else {
+    plot_ly(x = df2$Crude_Rate,
+            y = df2$State,
+            orientation='h',
+            width = 900,
+            height = 750,
+            type = "bar") %>% 
+        layout(
+          yaxis = list(tickfont = list(size = 11)))
+    }
+  }
+  )
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+
+#### Question 2
+Often you are asked whether particular States are improving their mortality rates (per cause) faster than, or slower than, the national average. Create a visualization that lets your clients see this for themselves for one cause of death at the time. Keep in mind that the national average should be weighted by the national population.
+
+```{r shinyApp2}
+# Build the UI part of the shinyApp
+ui <- fluidPage(
+  tabsetPanel( 
+    # Panel for Question 2
+    tabPanel(title = "Question2",
+      sidebarPanel(
+        htmlOutput('message_q2'),
+        selectInput('causes_q2', 'Causes', 
+                  unique(df$ICD_Chapter), selected='Neoplasms',width = 600),
+        checkboxGroupInput("States_q2", "States",states,inline = TRUE)
+      ),
+      mainPanel(plotlyOutput('plot1_q2'))
+    )
+  )
+)
+
+# Build the server side of the shinyApp
+
+server <- function(input, output, session) {
+  #Question2 Server Side
+  data_q2 <- reactive({
+    df3 <- df2 %>%
+      filter(ICD_Chapter == input$causes_q2) 
+    df3
+  })
+  
+  state2_q2 <-reactive(
+    input$States_q2
+  )
+  
+  # output message for question2
+  output$message_q2 <- renderText({
+    paste("<h4><center>The Mortality Rates for<b>",input$causes_q2,
+                   "</b><br>(scaled by multiplying 100000) </center></h4>", sep =" ")
+    
+  })
+  
+  # output plot for question2
+  output$plot1_q2 <- renderPlotly({
+    
+    df3 <- data_q2()
+    if (nrow(df3) == 0) {
+      plotly_empty(type = "scatter",width = 1,height = 1,)
+    }
+    else {
+      temp <- filter(df3, State == "Average")
+      
+      fig <- plot_ly(
+        x = temp$Year,
+        y = temp$Crude_Rate,
+        mode = 'lines+markers',
+        name = "Average",
+        type = "scatter"
+      )
+      selected_states <- state2_q2()
+      for (state in states)
+      {
+        alpha <- ifelse(state %in% selected_states,1,0.05)
+        temp <- filter(df3, State == state)
+        fig <- fig %>% add_trace(x = temp$Year, y = temp$Crude_Rate, name = state, mode = 'lines+markers',opacity = alpha) 
+      }
+      fig
+    }
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+### Combined ShinyApp for question1 and question2
+
+```{r shinyApp}
+
+# Build the UI part of the shinyApp
+ui <- fluidPage(
+  # Panel for Question 1
+  tabsetPanel( 
+    tabPanel(title = "Question1",
+      sidebarPanel(
+        htmlOutput('message_q1'),
+        sliderInput('year_q1','Year',min(df$Year),max(df$Year),2010,1,width=600,
+                  sep = ""),
+        selectInput('causes_q1', 'Causes', 
+                  unique(df$ICD_Chapter), selected='Neoplasms',width = 600)
+      ),
+      mainPanel(plotlyOutput('plot1_q1'))
+    ),
+    #---------------------------------------------------------------------------
+    
+    # Panel for Question 2
+    tabPanel(title = "Question2",
+      sidebarPanel(
+        htmlOutput('message_q2'),
+        selectInput('causes_q2', 'Causes', 
+                  unique(df$ICD_Chapter), selected='Neoplasms',width = 600),
+        checkboxGroupInput("States_q2", "States",states,inline = TRUE)
+      ),
+      mainPanel(plotlyOutput('plot1_q2'))
+    )
+  )
+)
+
+# Build the server side of the shinyApp
+
+server <- function(input, output, session) {
+  # Question1 Server Side
+  data_q1 <- reactive({
+    df2 <- df %>%
+       filter(Year == input$year_q1) %>%
+       filter(ICD_Chapter == input$causes_q1) %>%
+       arrange(Crude_Rate) 
+    df2$State <- factor(df2$State, levels = unique(df2$State))
+    df2
+  })
+  # output message for question1
+  output$message_q1 <- renderText({
+    
+    df2 <- data_q1()
+    if (nrow(df2) == 0) {
+      paste("<h4><center>No Data for<b>",input$causes_q1,
+            "</b>in",input$year_q1,"</center></h4>", sep =" ") 
+    }
+    else {
+      paste("<h4><center>The Mortality Rates for<b>",input$causes_q1,
+            "</b>in",input$year_q1,"<br>(scaled by multiplying 100000)</center></h4>", sep =" ")
+    }
+  })
+  
+  # output plot for question1
+  output$plot1_q1 <- renderPlotly({
+
+    df2 <- data_q1()
+    if (nrow(df2) == 0) {
+      plotly_empty(type = "bar",width = 1,height = 1,)
+    }
+    else {
+    plot_ly(x = df2$Crude_Rate,
+            y = df2$State,
+            orientation='h',
+            width = 900,
+            height = 750,
+            type = "bar") %>% 
+        layout(
+          yaxis = list(tickfont = list(size = 11)))
+    }
+  })
+  
+#-------------------------------------------------------------------------------
+  #Question2 Server Side
+  data_q2 <- reactive({
+    df3 <- df2 %>%
+      filter(ICD_Chapter == input$causes_q2) 
+    df3
+  })
+  
+  state2_q2 <-reactive(
+    input$States_q2
+  )
+  
+  # output message for question2
+  output$message_q2 <- renderText({
+    paste("<h4><center>The Mortality Rates for<b>",input$causes_q2,
+                   "</b><br>(scaled by multiplying 100000) </center></h4>", sep =" ")
+    
+  })
+  
+  # output plot for question2
+  output$plot1_q2 <- renderPlotly({
+    
+    df3 <- data_q2()
+    if (nrow(df3) == 0) {
+      plotly_empty(type = "scatter",width = 1,height = 1,)
+    }
+    else {
+      temp <- filter(df3, State == "Average")
+      
+      fig <- plot_ly(
+        x = temp$Year,
+        y = temp$Crude_Rate,
+        mode = 'lines+markers',
+        name = "Average",
+        type = "scatter"
+      )
+      selected_states <- state2_q2()
+      for (state in states)
+      {
+        alpha <- ifelse(state %in% selected_states,1,0.05)
+        temp <- filter(df3, State == state)
+        fig <- fig %>% add_trace(x = temp$Year, y = temp$Crude_Rate, name = state, mode = 'lines+markers',opacity = alpha) 
+      }
+      fig
+    }
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+
+
+
+
+
